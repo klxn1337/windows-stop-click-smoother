@@ -1,0 +1,47 @@
+desc:Stop smoother (stereo, 35 ms lookahead)
+// Experimental workaround, tested on one user's Windows/Equalizer APO setup.
+// Intended for one audible source at a time; operates on the combined mix.
+// Fades the preceding 30 ms after 5 ms below -70 dBFS is detected.
+// Adds 35 ms physical buffering; host must keep processing to drain the tail.
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+fade = max(2, ceil(srate * 0.030));
+hold = max(1, ceil(srate * 0.005));
+silence_threshold = 0.000316227766;
+delay = fade + hold;
+capacity = delay + 1;
+left = 0;
+right = capacity;
+gains = capacity * 2;
+memset(left, 0, capacity * 2);
+memset(gains, 1, capacity);
+pos = 0;
+silent = 0;
+// Physical delay stays in the ring buffer. Nonzero ReaJS PDC corrupted
+// openings at some host block sizes in our tests. This is not a generic
+// instruction for other plugins, and does not eliminate the 35 ms delay.
+pdc_delay = 0;
+pdc_bot_ch = 0;
+pdc_top_ch = 2;
+
+@sample
+left[pos] = spl0;
+right[pos] = spl1;
+gains[pos] = 1;
+max(abs(spl0), abs(spl1)) <= silence_threshold ? silent += 1 : silent = 0;
+silent == hold ? (
+    j = 0;
+    loop(fade,
+        slot = (pos - hold + 1 - fade + j + capacity * 2) % capacity;
+        gains[slot] = min(gains[slot], 1 - j / (fade - 1));
+        j += 1;
+    );
+);
+read = (pos + 1) % capacity;
+spl0 = left[read] * gains[read];
+spl1 = right[read] * gains[read];
+pos = read;
